@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Logs</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet">
+    <style>
+        .log-card {
+            border-radius: 15px;
+        }
+    </style>
+</head>
+
+<body class="bg-light">
+
+<div class="container py-4">
+
+    <h2 class="text-center mb-4">📊 Access Logs</h2>
+
+    <!-- ALERT -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{category}} alert-dismissible fade show">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      {% endfor %}
+    {% endwith %}
+
+    <div class="text-center mb-3">
+        <button onclick="loadLogs()" class="btn btn-primary">
+            <i class="bi bi-arrow-clockwise"></i> Refresh Logs
+        </button>
+    </div>
+
+    <!-- 🖥️ TABLE (Desktop only) -->
+    <div class="d-none d-md-block">
+        <table class="table table-bordered table-striped shadow text-center align-middle">
+            <thead class="table-dark">
+                <tr>
+                    <th>User</th>
+                    <th>Action</th>
+                    <th>Method</th>
+                    <th>Status</th>
+                    <th>Device</th>
+                    <th>Time</th>
+                </tr>
+            </thead>
+
+            <tbody id="logTable"></tbody>
+        </table>
+    </div>
+
+    <!-- 📱 MOBILE (Card view) -->
+    <div class="d-md-none" id="logCards"></div>
+
+    <!-- Back -->
+    <div class="text-center mt-3">
+        <a href="/dashboard" class="btn btn-secondary">⬅ Back</a>
+    </div>
+
+</div>
+<script>
+    function getActionIcon(action) {
+        if (action === "login") return `<i class="bi bi-box-arrow-in-right text-primary"></i> Login`;
+        if (action === "open_door") return `<i class="bi bi-door-open-fill text-success"></i> Open`;
+        if (action === "close_door") return `<i class="bi bi-door-closed-fill text-secondary"></i> Close`;
+        if (action === "otp_access") return `<i class="bi bi-shield-lock-fill text-warning"></i> OTP`;
+        return action;
+    }
+    
+    function getMethodIcon(method) {
+        if (method === "web") return `<i class="bi bi-globe"></i> Web`;
+        if (method === "mobile") return `<i class="bi bi-phone"></i> Mobile`;
+        if (method === "otp") return `<i class="bi bi-key"></i> OTP`;
+        return method;
+    }
+    
+    function getStatusBadge(status) {
+        if (status === "success") {
+            return `<span class="badge bg-success"><i class="bi bi-check-circle"></i> Success</span>`;
+        } else {
+            return `<span class="badge bg-danger"><i class="bi bi-x-circle"></i> Fail</span>`;
+        }
+    }
+    
+    function loadLogs() {
+        fetch('/logs-data')
+        .then(res => res.json())
+        .then(data => {
+    
+            let tableHTML = "";
+            let cardHTML = "";
+    
+            data.forEach(log => {
+    
+                tableHTML += `
+                <tr>
+                    <td>${log.user}</td>
+                    <td>${getActionIcon(log.action)}</td>
+                    <td>${getMethodIcon(log.method)}</td>
+                    <td>${getStatusBadge(log.status)}</td>
+                    <td style="max-width:200px; overflow:hidden;">${log.device}</td>
+                    <td>${log.time}</td>
+                </tr>
+                `;
+    
+                cardHTML += `
+                <div class="card shadow mb-3 p-3">
+                    <div class="d-flex justify-content-between">
+                        <strong>${log.user}</strong>
+                        ${getStatusBadge(log.status)}
+                    </div>
+                    <hr>
+                    <p class="text-truncate"><strong>Action:</strong>${getActionIcon(log.action)}</p>
+                    <p class="text-truncate"><strong>Method:</strong>${getMethodIcon(log.method)}</p>
+                    <p class="text-truncate"><strong>Device:</strong> ${log.device}</p>
+                    <p class="text-muted" style="font-size:12px;">${log.time}</p>
+                </div>
+                `;
+            });
+    
+            document.getElementById("logTable").innerHTML = tableHTML;
+            document.getElementById("logCards").innerHTML = cardHTML;
+        });
+    }
+    
+    // โหลดครั้งแรก
+    loadLogs();
+    </script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

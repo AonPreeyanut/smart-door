@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OTP</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+
+    <style>
+        body {
+            background: #f8f9fa;
+        }
+
+        .wrapper {
+            width: 180px;
+            height: 180px;
+            margin: auto;
+            position: relative;
+        }
+
+        svg {
+            transform: rotate(-90deg);
+        }
+
+        circle {
+            fill: none;
+            stroke-width: 10;
+        }
+
+        .bg {
+            stroke: #e6e6e6;
+        }
+
+        /* 🔥 FIX สำคัญ */
+        .rotator {
+            transform-box: fill-box;        /* ⭐ สำคัญมาก */
+            transform-origin: center;       /* ⭐ สำคัญมาก */
+            animation: spin 20s linear infinite;
+        }
+
+        .progress {
+            stroke: #28a745;
+            stroke-linecap: round;
+            transition: stroke 0.3s;
+            filter: drop-shadow(0 0 6px #28a745);
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        .otp-box {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+        }
+
+        .otp-number {
+            font-size: 36px;
+            font-weight: bold;
+        }
+
+        .timer {
+            font-size: 14px;
+            color: gray;
+        }
+
+        .card {
+            border-radius: 20px;
+        }
+    </style>
+</head>
+
+<body class="d-flex align-items-center" style="height:100vh;">
+
+<div class="container text-center">
+
+    <div class="card shadow p-4">
+
+        <h4 class="mb-3">🔢 OTP Code</h4>
+
+        <div class="wrapper">
+
+            <svg width="180" height="180">
+                <circle class="bg" cx="90" cy="90" r="75"></circle>
+
+                <!-- 🔥 หมุนตรงนี้ -->
+                <g class="rotator">
+                    <circle class="progress" cx="90" cy="90" r="75"
+                        stroke-dasharray="471"
+                        stroke-dashoffset="300">
+                    </circle>
+                </g>
+            </svg>
+
+            <div class="otp-box">
+                <div id="otpValue" class="otp-number">{{ otp }}</div>
+                <div class="timer">⏳ <span id="timeLeft">20</span>s</div>
+            </div>
+
+        </div>
+
+        <a href="/dashboard" class="btn btn-secondary w-100 mt-4">
+            ⬅ Back
+        </a>
+
+    </div>
+
+</div>
+
+<script>
+const TOTAL = 20;
+let lastStep = -1;
+
+function generateNewOTP() {
+    fetch("/request-otp")
+        .then(res => res.text())
+        .then(html => {
+            let doc = new DOMParser().parseFromString(html, "text/html");
+            let newOTP = doc.querySelector("#otpValue").innerText;
+            document.getElementById("otpValue").innerText = newOTP;
+        });
+}
+
+function updateUI() {
+    let now = Math.floor(Date.now() / 1000);
+    let step = Math.floor(now / TOTAL);
+    let remain = TOTAL - (now % TOTAL);
+
+    document.getElementById("timeLeft").innerText = remain;
+
+    if (step !== lastStep) {
+        lastStep = step;
+        generateNewOTP();
+    }
+
+    let circle = document.querySelector(".progress");
+    if (remain <= 5) {
+        circle.style.stroke = "red";
+    } else {
+        circle.style.stroke = "#28a745";
+    }
+}
+
+updateUI();
+setInterval(updateUI, 1000);
+</script>
+
+</body>
+</html>

@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard</title>
+
+    <!-- ✅ Responsive สำคัญ -->
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    <!-- Bootstrap -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+</head>
+
+<body class="bg-light">
+
+<div class="container py-4">
+
+    <!-- Title -->
+    <h2 class="text-center mb-4">🚪 Smart Door Dashboard</h2>
+
+    <!-- 🚪 Door Status -->
+    <div class="text-center mb-4">
+        <h5>
+            🚪 Door Status:
+            <span id="doorStatus"
+                class="badge bg-{{ 'success' if door_status == 'UNLOCKED' else 'secondary' }}">
+                {{ door_status }}
+            </span>
+        </h5>
+
+        <a href="/close-door" class="btn btn-dark mt-2 w-100">
+            🔒 Lock Door
+        </a>
+    </div>
+
+    <!-- ALERT -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="alert alert-{{category}} alert-dismissible fade show">
+          {{ message }}
+          <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      {% endfor %}
+    {% endwith %}
+
+    <!-- GRID -->
+    <div class="row g-3 text-center">
+
+        <!-- 🚪 Door Control -->
+        <div class="col-12 col-md-4">
+            <div class="card p-4 shadow h-100">
+                <h5>🚪 Door Control</h5>
+                <a href="/open-door?token={{ token }}&source=web"
+                   class="btn btn-success mt-3 w-100">
+                    Open Door
+                </a>
+            </div>
+        </div>
+
+        <!-- 🔢 OTP -->
+        <div class="col-12 col-md-4">
+            <div class="card p-4 shadow h-100">
+                <h5>🔢 OTP</h5>
+
+                {% set ua = request.headers.get('User-Agent', '').lower() %}
+
+                {% if 'mobile' in ua %}
+                    <!-- 📱 Mobile -->
+                    <form method="POST" action="/request-otp">
+                        <button class="btn btn-warning mt-3 w-100">
+                            Request OTP
+                        </button>
+                    </form>
+                {% else %}
+                    <!-- 🌐 Web -->
+                    <a href="/otp" class="btn btn-outline-dark mt-3 w-100">
+                        Enter OTP
+                    </a>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- 📊 Logs -->
+        <div class="col-12 col-md-4">
+            <div class="card p-4 shadow h-100">
+                <h5>📊 Logs</h5>
+                <a href="/logs" class="btn btn-primary mt-3 w-100">
+                    View Logs
+                </a>
+            </div>
+        </div>
+
+        <!-- 👑 Admin Panel -->
+        {% if role == 'admin' %}
+        <div class="col-12 col-md-4">
+            <div class="card p-4 shadow border-danger h-100">
+                <h5>👑 Admin Panel</h5>
+                <a href="/admin" class="btn btn-danger mt-3 w-100">
+                    Manage Users
+                </a>
+            </div>
+        </div>
+        {% endif %}
+
+    </div>
+
+    <!-- Logout -->
+    <div class="text-center mt-4">
+        <a href="/logout" class="btn btn-secondary w-100">
+            Logout
+        </a>
+    </div>
+
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+    function updateDoorStatus() {
+        fetch("/door-status")
+            .then(res => res.json())
+            .then(data => {
+                let status = data.status;
+                let el = document.getElementById("doorStatus");
+    
+                el.innerText = status;
+    
+                if (status === "UNLOCKED") {
+                    el.className = "badge bg-success";
+                } else {
+                    el.className = "badge bg-secondary";
+                }
+            });
+    }
+    
+    // 🔁 อัปเดตทุก 2 วินาที
+    setInterval(updateDoorStatus, 2000);
+    </script>
+</body>
+</html>
