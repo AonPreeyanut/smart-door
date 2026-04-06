@@ -46,7 +46,7 @@
     <div class="row g-3 text-center">
 
         <!-- 🚪 Door Control -->
-        <div class="col-12 col-md-4">
+        <!-- <div class="col-12 col-md-4">
             <div class="card p-4 shadow h-100">
                 <h5>🚪 Door Control</h5>
                 <a href="/open-door?token={{ token }}&source=web"
@@ -54,7 +54,7 @@
                     Open Door
                 </a>
             </div>
-        </div>
+        </div> -->
 
         <!-- 🔢 OTP -->
         <div class="col-12 col-md-4">
@@ -80,6 +80,7 @@
         </div>
 
         <!-- 📊 Logs -->
+        {% if role == 'admin' %}
         <div class="col-12 col-md-4">
             <div class="card p-4 shadow h-100">
                 <h5>📊 Logs</h5>
@@ -90,7 +91,6 @@
         </div>
 
         <!-- 👑 Admin Panel -->
-        {% if role == 'admin' %}
         <div class="col-12 col-md-4">
             <div class="card p-4 shadow border-danger h-100">
                 <h5>👑 Admin Panel</h5>
