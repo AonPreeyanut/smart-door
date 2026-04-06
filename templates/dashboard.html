@@ -66,6 +66,7 @@
                 {% if 'mobile' in ua %}
                     <!-- 📱 Mobile -->
                     <form method="POST" action="/request-otp">
+                        {{ csrf_token() }}
                         <button class="btn btn-warning mt-3 w-100">
                             Request OTP
                         </button>

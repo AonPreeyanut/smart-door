@@ -8,6 +8,12 @@ import hashlib
 import hmac
 from werkzeug.security import generate_password_hash, check_password_hash
 import threading
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+import pyotp
+from functools import wraps
+from flask import session
+from flask_wtf import CSRFProtect
 
 app = Flask(__name__)
 
@@ -18,6 +24,14 @@ app.secret_key = os.environ.get("SECRET_KEY") or secrets.token_hex(32)
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///database.db'
 db = SQLAlchemy(app)
 
+app.config.update(
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax'
+)
+
+app.permanent_session_lifetime = datetime.timedelta(minutes=5)
+
 # 🔑 Token
 API_TOKEN = secrets.token_hex(16)
 
@@ -25,15 +39,19 @@ API_TOKEN = secrets.token_hex(16)
 door_status = "LOCKED"
 
 # 🔢 OTP
-OTP_SECRET = os.environ.get("OTP_SECRET") or secrets.token_hex(16)
+OTP_SECRET = pyotp.random_base32()
 OTP_INTERVAL = 20  # วินาที
 
 # 🚫 Rate limit (ง่ายๆ)
-login_attempts = {}
-otp_attempts = {}
-otp_blocked_until = {}
 otp_request_time = {}
 
+limiter = Limiter(
+    get_remote_address,
+    app=app,
+    default_limits=["100 per minute"]
+)
+
+csrf = CSRFProtect(app)
 # ----------------------
 # DATABASE
 # ----------------------
@@ -52,6 +70,16 @@ class Log(db.Model):
     device = db.Column(db.String(200))   # User-Agent
     time = db.Column(db.String(100))
     status = db.Column(db.String(50))
+
+class Door(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    status = db.Column(db.String(20))
+
+class OTPAttempt(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    ip = db.Column(db.String(100))
+    API_TOKEN = db.Column(db.String(100))
+    timestamp = db.Column(db.Float)
 
 # ----------------------
 # HELPERS
@@ -91,100 +119,59 @@ def get_device_type():
     user_agent = request.headers.get("User-Agent", "").lower()
 
     if "mobile" in user_agent:
-        return "mobile"
+        device = "mobile"
     else:
-        return "web"
+        device = "web"
+    
+    session["device"] = device
+    return device
     
 # 🔢 OTP generate
-def generate_otp(counter=None):
-    if counter is None:
-        counter = int(time.time() // OTP_INTERVAL)
+def generate_otp():
+    totp = pyotp.TOTP(OTP_SECRET)
+    return totp.now()
 
-    raw = f"{counter}{OTP_SECRET}"
-    hash_val = hashlib.sha256(raw.encode()).hexdigest()
-    return str(int(hash_val, 16))[-4:].zfill(4)
+def verify_otp(user_otp):
+    totp = pyotp.TOTP(OTP_SECRET)
+    return totp.verify(user_otp, valid_window=1)
 
 # 🔐 secure compare
 def secure_compare(a, b):
     return hmac.compare_digest(a, b)
 
-# 🚫 rate limit
-def is_blocked(ip):
-    now = time.time()
-    attempts = login_attempts.get(ip, [])
-
-    # ลบอันเก่า
-    attempts = [t for t in attempts if now - t < 60]
-
-    login_attempts[ip] = attempts
-
-    return len(attempts) >= 5
-
-def record_attempt(ip):
-    login_attempts.setdefault(ip, []).append(time.time())
-
-def is_otp_blocked(ip):
-    now = time.time()
-
-    # ⛔ ยังอยู่ในช่วง cooldown
-    if ip in otp_blocked_until and now < otp_blocked_until[ip]:
-        return True
-
-    attempts = otp_attempts.get(ip, [])
-    attempts = [t for t in attempts if now - t < 60]  # 1 นาที
-    otp_attempts[ip] = attempts
-
-    return False
-
-def record_otp_attempt(ip):
-    now = time.time()
-    attempts = otp_attempts.get(ip, [])
-    attempts.append(now)
-
-    # ล้างของเก่า
-    attempts = [t for t in attempts if now - t < 60]
-    otp_attempts[ip] = attempts
-
-    # 🚨 ถ้าผิดเกิน 5 ครั้ง → cooldown
-    if len(attempts) >= 5:
-        # จำนวนครั้งที่โดน block ก่อนหน้า
-        block_count = otp_blocked_until.get(ip, 0)
-
-        # ⏱ Progressive cooldown
-        if block_count == 0:
-            cooldown = 60     # ครั้งแรก 1 นาที
-        elif block_count < now:
-            cooldown = 120    # ครั้งสอง 2 นาที
-        else:
-            cooldown = 300    # ครั้งสาม+ 5 นาที
-
-        otp_blocked_until[ip] = now + cooldown
-
-def get_remaining_block_time(ip):
-    now = time.time()
-    if ip in otp_blocked_until:
-        remaining = int(otp_blocked_until[ip] - now)
-        return max(0, remaining)
-    return 0
-
 def auto_lock():
-    global door_status
     time.sleep(5)
-    door_status = "LOCKED"
+    with app.app_context():
+        door = Door.query.first()
+        door.status = "LOCKED"
+        db.session.commit()
+
+def require_token(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get("X-API-KEY")
+
+        if not token or not secure_compare(token, API_TOKEN):
+            return "❌ Unauthorized", 403
+
+        return f(*args, **kwargs)
+    return decorated
+
+def regenerate_session():
+    old = dict(session)
+    session.clear()
+    session.update(old)
 
 # ----------------------
 # LOGIN
 # ----------------------
 @app.route("/", methods=["GET", "POST"])
+@limiter.limit("5 per minute")
 def login():
     ip, device = get_client_info()
     method = get_device_type()
 
     if request.method == "POST":
-
-        if is_blocked(ip):
-            flash("❌ Too many attempts, try later", "danger")
-            return redirect("/")
 
         user = request.form["username"]
         pw = request.form["password"]
@@ -192,8 +179,10 @@ def login():
         found = User.query.filter_by(username=user).first()
 
         if found and check_password_hash(found.password, pw):
+            regenerate_session()
             session["user"] = user
             session["role"] = found.role
+            session.permanent = True
 
             log = Log(
                 user=user, 
@@ -207,10 +196,11 @@ def login():
             db.session.add(log)
             db.session.commit()
 
+            session["user"] = user 
+
             return redirect("/dashboard")
 
         else:
-            record_attempt(ip)
 
             log = Log(
                 user=user, 
@@ -235,11 +225,17 @@ def login():
 def dashboard():
     if "user" not in session:
         return redirect("/")
+    
+    door = Door.query.first()
+    if not door:
+        door = Door(status="LOCKED")
+        db.session.add(door)
+        db.session.commit()
 
     return render_template(
         "dashboard.html",
         role=session.get("role"),
-        door_status=door_status,
+        door_status=door.status,
         token=API_TOKEN
     )
 
@@ -247,10 +243,11 @@ def dashboard():
 # 🚪 OPEN DOOR
 # ----------------------
 @app.route("/open-door")
+@require_token
 def open_door():
     global door_status
     ip, device = get_client_info()
-    token = request.args.get("token")
+    token = request.headers.get("X-API-KEY")
     source = request.args.get("source") or get_device_type()
 
     if "user" not in session:
@@ -290,7 +287,13 @@ def open_door():
         flash("❌ Invalid token", "danger")
         return redirect("/dashboard")
 
-    door_status = "UNLOCKED"
+    door = Door.query.first()
+    if not door:
+        door = Door(status="LOCKED")
+        db.session.add(door)
+
+    door.status = "UNLOCKED"
+    db.session.commit()
 
     # 🔄 reset OTP หลังใช้
     session["otp_verified"] = False
@@ -319,8 +322,15 @@ def close_door():
     if "user" not in session:
         return redirect("/")
 
-    global door_status
-    door_status = "LOCKED"
+    door = Door.query.first()
+    if not door:
+        door = Door(status="LOCKED")
+        db.session.add(door)
+
+
+    door.status = "LOCKED"
+    db.session.commit()
+
     source = get_device_type()
 
     ip, device = get_client_info()
@@ -344,17 +354,13 @@ def close_door():
 # 📱 REQUEST OTP (Mobile)
 # ----------------------
 @app.route("/request-otp", methods=["GET", "POST"])
+@limiter.limit("3 per minute")
 def request_otp():
     if get_device_type() != "mobile":
         return "❌ Mobile Only"
     
     ip, _ = get_client_info()
     now = time.time()
-
-    last = otp_request_time.get(ip, 0)
-
-    if now - last < 10:
-        return "⛔ Please wait before requesting again"
 
     otp_request_time[ip] = now
 
@@ -365,6 +371,7 @@ def request_otp():
 # 🔢 ENTER OTP (Web)
 # ----------------------
 @app.route("/otp", methods=["GET", "POST"])
+@limiter.limit("5 per minute")
 def otp():
     if "user" not in session:
         return redirect("/")
@@ -380,29 +387,9 @@ def otp():
     # ----------------------
     if request.method == "POST":
 
-        if is_otp_blocked(ip):
-            remaining = get_remaining_block_time(ip)
-
-            log = Log(
-                user=session["user"],
-                action="otp access : Blocked due to too many attempts",
-                method=method,
-                ip=ip,
-                device=device,
-                time=str(datetime.datetime.now()),
-                status="fail"
-            )
-
-            db.session.add(log)
-            db.session.commit()
-
-
-            flash(f"⛔ Try again in {remaining} sec", "danger")
-            return redirect("/otp")
-
         user_otp = request.form["otp"]
 
-        if not user_otp.isdigit() or len(user_otp) != 4:
+        if not user_otp.isdigit() or len(user_otp) != 6:
 
             log = Log(
                 user=session["user"],
@@ -420,10 +407,7 @@ def otp():
             flash("❌ Invalid format", "danger")
             return redirect("/otp")
 
-        current_otp = generate_otp()
-        previous = generate_otp(int(time.time() // OTP_INTERVAL) - 1)
-
-        if secure_compare(user_otp, current_otp) or secure_compare(user_otp, previous):
+        if verify_otp(user_otp):
 
             session["otp_verified"] = True
 
@@ -439,13 +423,10 @@ def otp():
             db.session.add(log)
             db.session.commit()
 
-            otp_attempts[ip] = []
-
             flash("🚪 Door Opened via OTP", "success")
             return redirect("/dashboard")
 
         else:
-            record_otp_attempt(ip)
 
             log = Log(
                 user=session["user"],
@@ -462,11 +443,8 @@ def otp():
             flash("❌ OTP Incorrect", "danger")
             return redirect("/otp")
 
-    # ----------------------
-    # GET (เปิดหน้า OTP)
-    # ----------------------
-    remaining = get_remaining_block_time(ip)
-    return render_template("otp.html", remaining=remaining)
+
+    return render_template("otp.html")
 
 
 # ----------------------
@@ -571,9 +549,10 @@ def delete_user(user_id):
 def logout():
     ip, device = get_client_info()
     method = get_device_type()
+    current_user = session.get("user" , "Unknown")
 
     log = Log(
-        user=session["user"],
+        user=current_user,
         action="logout : Logout Successful",
         method=method,
         ip=ip, 
@@ -593,7 +572,8 @@ def logout():
 # ----------------------
 @app.route("/door-status")
 def get_door_status():
-    return {"status": door_status}
+    door = Door.query.first()
+    return {"status": door.status}
 
 # ----------------------
 # INIT DB

@@ -26,6 +26,7 @@
     </div>
 
     <form method="POST">
+        {{ csrf_token() }}
         <input name="otp" class="form-control mb-3" placeholder="Enter OTP" required>
         <button id="submitBtn" class="btn btn-success w-100">Submit</button>
     </form>

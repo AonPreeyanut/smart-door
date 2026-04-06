@@ -22,6 +22,7 @@
     {% endwith %}
 
     <form method="POST" class="mb-3">
+        {{ csrf_token() }}
         <input name="username" class="form-control mb-2" placeholder="Username">
         <input name="password" class="form-control mb-2" placeholder="Password">
         <button class="btn btn-success">Add User</button>
