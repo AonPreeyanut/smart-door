@@ -61,21 +61,34 @@
             <div class="card p-4 shadow h-100">
                 <h5>🔢 OTP</h5>
 
-                {% set ua = request.headers.get('User-Agent', '').lower() %}
+                <!-- {% set ua = request.headers.get('User-Agent', '').lower() %} -->
 
-                {% if 'mobile' in ua %}
+                <!-- {% if 'mobile' in ua %} -->
                     <!-- 📱 Mobile -->
+                    <!-- <form method="POST" action="/request-otp">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                        <button class="btn btn-warning mt-3 w-100">
+                            Request OTP
+                        </button>
+                    </form> -->
+                <!-- {% else %} -->
+                    <!-- 🌐 Web -->
+                    <!-- <a href="/otp" class="btn btn-outline-dark mt-3 w-100">
+                        Enter OTP
+                    </a> -->
+                <!-- {% endif %} -->
+
+                {% if role == 'master' %}
+                    <a href="/otp" class="btn btn-outline-dark mt-3 w-100">
+                        Enter OTP
+                    </a>
+                {% else %}
                     <form method="POST" action="/request-otp">
-                        {{ csrf_token() }}
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <button class="btn btn-warning mt-3 w-100">
                             Request OTP
                         </button>
                     </form>
-                {% else %}
-                    <!-- 🌐 Web -->
-                    <a href="/otp" class="btn btn-outline-dark mt-3 w-100">
-                        Enter OTP
-                    </a>
                 {% endif %}
             </div>
         </div>
@@ -88,6 +101,10 @@
                 <a href="/logs" class="btn btn-primary mt-3 w-100">
                     View Logs
                 </a>
+                
+                <a href="/otp-attempts" class="btn btn-warning w-100">
+                    🔍 View OTP/API Logs
+                </a>
             </div>
         </div>
 
@@ -95,7 +112,7 @@
         <div class="col-12 col-md-4">
             <div class="card p-4 shadow border-danger h-100">
                 <h5>👑 Admin Panel</h5>
-                <a href="/admin" class="btn btn-danger mt-3 w-100">
+                <a href="/admin" class="btn btn-danger mt-3 mb-2 w-100">
                     Manage Users
                 </a>
             </div>
@@ -115,25 +132,44 @@
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 <script>
+    let lastStatus = null;
+
     function updateDoorStatus() {
         fetch("/door-status")
             .then(res => res.json())
             .then(data => {
                 let status = data.status;
                 let el = document.getElementById("doorStatus");
-    
+
+                // อัปเดต UI
                 el.innerText = status;
-    
+
                 if (status === "UNLOCKED") {
                     el.className = "badge bg-success";
                 } else {
                     el.className = "badge bg-secondary";
                 }
+
+                // 🔥 detect change
+                if (lastStatus !== status) {
+                    lastStatus = status;
+
+                    if (status === "UNLOCKED") {
+                        window.open("https://www.google.com", "_blank");
+                    }
+
+                    // if (status === "LOCKED") {
+                    //     window.open("https://dru1.dru.ac.th/", "_blank");
+                    // }
+                }
             });
     }
-    
-    // 🔁 อัปเดตทุก 2 วินาที
+
+    // 🔁 เช็คทุก 2 วินาที
     setInterval(updateDoorStatus, 2000);
-    </script>
+
+    // โหลดครั้งแรก
+    updateDoorStatus();
+</script>
 </body>
 </html>

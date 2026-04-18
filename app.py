@@ -78,7 +78,8 @@ class Door(db.Model):
 class OTPAttempt(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     ip = db.Column(db.String(100))
-    API_TOKEN = db.Column(db.String(100))
+    api_token = db.Column(db.String(100))
+    action = db.Column(db.String(100))
     timestamp = db.Column(db.Float)
 
 # ----------------------
@@ -131,6 +132,7 @@ def generate_otp():
     totp = pyotp.TOTP(OTP_SECRET)
     return totp.now()
 
+# 🔢 OTP verify
 def verify_otp(user_otp):
     totp = pyotp.TOTP(OTP_SECRET)
     return totp.verify(user_otp, valid_window=1)
@@ -139,13 +141,15 @@ def verify_otp(user_otp):
 def secure_compare(a, b):
     return hmac.compare_digest(a, b)
 
+# 🚪 auto lock หลังเปิด 1 นาที
 def auto_lock():
-    time.sleep(5)
+    time.sleep(60)  # รอ 60 วินาที
     with app.app_context():
         door = Door.query.first()
         door.status = "LOCKED"
         db.session.commit()
 
+# 🔑 require token decorator
 def require_token(f):
     @wraps(f)
     def decorated(*args, **kwargs):
@@ -157,10 +161,24 @@ def require_token(f):
         return f(*args, **kwargs)
     return decorated
 
+# 🔄 regenerate session (ป้องกัน session fixation)
 def regenerate_session():
     old = dict(session)
     session.clear()
     session.update(old)
+
+# 🔥 log API usage (สำหรับ OTP API)
+def log_api_usage(ip, token, action):
+    hashed_token = hashlib.sha256(token.encode()).hexdigest()
+
+    log = OTPAttempt(
+        ip=ip,
+        api_token=hashed_token,
+        action=action,
+        timestamp=time.time()
+    )
+    db.session.add(log)
+    db.session.commit()
 
 # ----------------------
 # LOGIN
@@ -195,6 +213,7 @@ def login():
                 )
             db.session.add(log)
             db.session.commit()
+            log_api_usage(ip, API_TOKEN, "login successful")
 
             session["user"] = user 
 
@@ -213,6 +232,7 @@ def login():
             )
             db.session.add(log)
             db.session.commit()
+            log_api_usage(ip, API_TOKEN, "login failed")
 
             flash("❌ Login Failed", "danger")
 
@@ -266,6 +286,7 @@ def open_door():
         )
         db.session.add(log)
         db.session.commit()
+        log_api_usage(ip, API_TOKEN, "open door failed - OTP not verified")
 
         flash("❌ Please verify OTP first", "danger")
         return redirect("/otp")
@@ -283,6 +304,7 @@ def open_door():
         )
         db.session.add(log)
         db.session.commit()
+        log_api_usage(ip, token, "open door failed - invalid token")
 
         flash("❌ Invalid token", "danger")
         return redirect("/dashboard")
@@ -309,10 +331,11 @@ def open_door():
     )
     db.session.add(log)
     db.session.commit()
+    log_api_usage(ip, API_TOKEN, "open door successful")
 
     threading.Thread(target=auto_lock, daemon=True).start()
     flash("🚪 Door Opened", "success")
-    return redirect("/dashboard")
+    return redirect("/dashboard?status=1")
 
 # ----------------------
 # 🔒 CLOSE DOOR
@@ -346,9 +369,42 @@ def close_door():
     )
     db.session.add(log)
     db.session.commit()
+    log_api_usage(ip, API_TOKEN, "close door successful")
 
     flash("🔒 Door Locked", "info")
-    return redirect("/dashboard")
+    return redirect("/dashboard?status=0")
+
+@app.route("/close-door-otp-public")
+def close_door_public():
+
+    door = Door.query.first()
+    if not door:
+        door = Door(status="LOCKED")
+        db.session.add(door)
+
+
+    door.status = "LOCKED"
+    db.session.commit()
+
+    source = get_device_type()
+
+    ip, device = get_client_info()
+
+    log = Log(
+        user="guest",
+        action="close door : Successful",
+        method=source,
+        ip=ip,
+        device=device,
+        time=str(datetime.datetime.now()),
+        status="success"
+    )
+    db.session.add(log)
+    db.session.commit()
+    log_api_usage(ip, API_TOKEN, "close door successful - public")
+
+    flash("🔒 Door Locked", "info")
+    return redirect("/otp-public?status=0")
 
 # ----------------------
 # 📱 REQUEST OTP (Mobile)
@@ -356,8 +412,8 @@ def close_door():
 @app.route("/request-otp", methods=["GET", "POST"])
 @limiter.limit("3 per minute")
 def request_otp():
-    if get_device_type() != "mobile":
-        return "❌ Mobile Only"
+    # if get_device_type() != "mobile":
+    #     return "❌ Mobile Only"
     
     ip, _ = get_client_info()
     now = time.time()
@@ -365,6 +421,7 @@ def request_otp():
     otp_request_time[ip] = now
 
     otp = generate_otp()
+    log_api_usage(ip, API_TOKEN, "OTP requested")
     return render_template("request_otp.html", otp=otp)
 
 # ----------------------
@@ -403,6 +460,7 @@ def otp():
 
             db.session.add(log)
             db.session.commit()
+            log_api_usage(ip, API_TOKEN, "open door failed - OTP invalid format")
 
             flash("❌ Invalid format", "danger")
             return redirect("/otp")
@@ -422,9 +480,26 @@ def otp():
             )
             db.session.add(log)
             db.session.commit()
+            log_api_usage(ip, API_TOKEN, "open door successful - OTP verified")
+
+            # flash("🚪 Door Opened via OTP", "success")
+            # return redirect("/dashboard")
+
+            door = Door.query.first()
+            if not door:
+                door = Door(status="LOCKED")
+                db.session.add(door)
+
+            door.status = "UNLOCKED"
+            db.session.commit()
+
+            # auto lock
+            threading.Thread(target=auto_lock, daemon=True).start()
+
+            session["otp_verified"] = False  # reset
 
             flash("🚪 Door Opened via OTP", "success")
-            return redirect("/dashboard")
+            return redirect("/dashboard?status=1")
 
         else:
 
@@ -439,12 +514,62 @@ def otp():
             )
             db.session.add(log)
             db.session.commit()
+            log_api_usage(ip, API_TOKEN, "open door failed - OTP incorrect")
 
             flash("❌ OTP Incorrect", "danger")
             return redirect("/otp")
 
 
     return render_template("otp.html")
+
+@app.route("/otp-public", methods=["GET", "POST"])
+@limiter.limit("5 per minute")
+def otp_public():
+    ip, device = get_client_info()
+
+    if request.method == "POST":
+        user_otp = request.form["otp"]
+
+        if not user_otp.isdigit() or len(user_otp) != 6:
+            flash("❌ Invalid format", "danger")
+            return redirect("/otp-public")
+
+        if verify_otp(user_otp):
+
+            # ✅ เปิดประตูได้เลย (ไม่ต้อง login)
+            door = Door.query.first()
+            if not door:
+                door = Door(status="LOCKED")
+                db.session.add(door)
+
+            door.status = "UNLOCKED"
+            db.session.commit()
+
+            # auto lock
+            threading.Thread(target=auto_lock, daemon=True).start()
+
+            # 🔥 log
+            log = Log(
+                user="guest",
+                action="otp public : open door",
+                method="otp",
+                ip=ip,
+                device=device,
+                time=str(datetime.datetime.now()),
+                status="success"
+            )
+            db.session.add(log)
+            db.session.commit()
+            log_api_usage(ip, API_TOKEN, "open door successful - public")
+
+            return redirect("/otp-public?status=1")
+
+        else:
+            log_api_usage(ip, API_TOKEN, "open door failed - OTP incorrect - public")
+            flash("❌ OTP Incorrect", "danger")
+            return redirect("/otp-public")
+
+    return render_template("otp_public.html")
 
 
 # ----------------------
@@ -500,6 +625,7 @@ def admin():
                 )
         db.session.add(log)
         db.session.commit()
+        log_api_usage(ip, API_TOKEN, "added user - " + user)
 
         flash("✅ User Added", "success")
 
@@ -537,10 +663,19 @@ def delete_user(user_id):
         )
         db.session.add(log)
         db.session.commit()
+        log_api_usage(ip, API_TOKEN, "deleted user - " + user.username)
 
         flash("🗑️ User deleted", "warning")
 
     return redirect("/admin")
+
+@app.route("/otp-attempts")
+def otp_attempts():
+    if session.get("role") != "admin":
+        return "Unauthorized"
+
+    logs = OTPAttempt.query.order_by(OTPAttempt.id.desc()).limit(50).all()
+    return render_template("otp_attempts.html", logs=logs)
 
 # ----------------------
 # LOGOUT
@@ -563,6 +698,7 @@ def logout():
 
     db.session.add(log)
     db.session.commit()
+    log_api_usage(ip, API_TOKEN, "logout successful")
 
     session.clear()
     return redirect("/")
@@ -583,6 +719,12 @@ if __name__ == "__main__":
         db.create_all()
 
         if not User.query.first():
+            master_user = User(
+                username="master",
+                password=generate_password_hash("1234"),
+                role="master"
+            )
+
             admin_user = User(
                 username="admin",
                 password=generate_password_hash("1234"),
@@ -595,6 +737,7 @@ if __name__ == "__main__":
                 role="user"
             )
 
+            db.session.add(master_user)
             db.session.add(admin_user)
             db.session.add(normal_user)
             db.session.commit()

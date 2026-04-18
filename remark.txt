@@ -92,3 +92,6 @@ app.run(debug=True, port=5001)
 ======================================
 END OF FILE
 ===========
+
+
+otp โดยไม่ต้อง login => http://127.0.0.1:5000/otp-public
