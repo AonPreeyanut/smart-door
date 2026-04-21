@@ -180,11 +180,22 @@ def log_api_usage(ip, token, action):
     db.session.add(log)
     db.session.commit()
 
+def user_and_ip():
+    return session.get("user") or get_remote_address()
+
+def ip_only():
+    return get_remote_address()
+
+def user_and_ip():
+    ip = get_remote_address()
+    user = session.get("user", "guest")
+    return f"{user}-{ip}"
+
 # ----------------------
 # LOGIN
 # ----------------------
 @app.route("/", methods=["GET", "POST"])
-@limiter.limit("5 per minute")
+@limiter.limit("5 per minute", key_func=user_and_ip)
 def login():
     ip, device = get_client_info()
     method = get_device_type()
@@ -410,7 +421,7 @@ def close_door_public():
 # 📱 REQUEST OTP (Mobile)
 # ----------------------
 @app.route("/request-otp", methods=["GET", "POST"])
-@limiter.limit("3 per minute")
+@limiter.limit("3 per minute", key_func=user_and_ip)
 def request_otp():
     # if get_device_type() != "mobile":
     #     return "❌ Mobile Only"
@@ -428,7 +439,7 @@ def request_otp():
 # 🔢 ENTER OTP (Web)
 # ----------------------
 @app.route("/otp", methods=["GET", "POST"])
-@limiter.limit("5 per minute")
+# @limiter.limit("5 per minute", key_func=user_and_ip)
 def otp():
     if "user" not in session:
         return redirect("/")
@@ -523,7 +534,7 @@ def otp():
     return render_template("otp.html")
 
 @app.route("/otp-public", methods=["GET", "POST"])
-@limiter.limit("5 per minute")
+@limiter.limit("15 per minute", key_func=ip_only)
 def otp_public():
     ip, device = get_client_info()
 
